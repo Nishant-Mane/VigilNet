@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+
+# Databases
+*.db
+
+# OS / IDE
+.vscode/
+.idea/
+
+# Git
+.git/
