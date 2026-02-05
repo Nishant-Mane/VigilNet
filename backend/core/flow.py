@@ -4,7 +4,7 @@ import time
 class Flow:
     """
     Core domain object representing ONE network flow.
-    This will later be used by:
+    Used by:
     - Flow Manager
     - Feature Extractor
     - Storage layer
@@ -22,7 +22,12 @@ class Flow:
         # ---- Timestamp tracking ----
         self.all_packet_times = []
         self.fwd_packet_times = []
+        self.bwd_packet_times = []
 
+        # ---- Packet length tracking (CRITICAL FIX) ----
+        self.all_packet_lengths = []
+        self.fwd_packet_lengths = []
+        self.bwd_packet_lengths = []
 
         # ---- Timing ----
         self.start_time = time.time()
@@ -46,37 +51,52 @@ class Flow:
 
     def update_forward(self, packet_length, flags=None):
         now = time.time()
+
         self.all_packet_times.append(now)
         self.fwd_packet_times.append(now)
 
+        self.all_packet_lengths.append(packet_length)
+        self.fwd_packet_lengths.append(packet_length)
+
         self.fwd_packets += 1
         self.fwd_bytes += packet_length
-        self.last_seen = time.time()
+        self.last_seen = now
+
         self._update_flags(flags)
 
     def update_backward(self, packet_length, flags=None):
         now = time.time()
+
         self.all_packet_times.append(now)
+        self.bwd_packet_times.append(now)
+
+        self.all_packet_lengths.append(packet_length)
+        self.bwd_packet_lengths.append(packet_length)
+
         self.bwd_packets += 1
         self.bwd_bytes += packet_length
-        self.last_seen = time.time()
+        self.last_seen = now
+
         self._update_flags(flags)
 
     def _update_flags(self, flags):
         if not flags:
             return
 
-        if 'FIN' in flags:
+        # Normalize flags safely (handles numeric / hex / string)
+        flags = str(flags).upper()
+
+        if "FIN" in flags:
             self.fin_count += 1
-        if 'SYN' in flags:
+        if "SYN" in flags:
             self.syn_count += 1
-        if 'RST' in flags:
+        if "RST" in flags:
             self.rst_count += 1
-        if 'PSH' in flags:
+        if "PSH" in flags:
             self.psh_count += 1
-        if 'ACK' in flags:
+        if "ACK" in flags:
             self.ack_count += 1
-        if 'URG' in flags:
+        if "URG" in flags:
             self.urg_count += 1
 
     def duration(self):

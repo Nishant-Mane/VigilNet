@@ -8,7 +8,8 @@ __pycache__/
 venv/
 .venv/
 backend/storage/runtime/
-
+backend/storage/*.db
+node_modules/
 
 # Databases
 *.db

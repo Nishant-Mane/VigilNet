@@ -1,0 +1,160 @@
+/* ---------- App Root ---------- */
+.app-root {
+  min-height: 100vh;
+  background-color: #0b0b0b;
+  display: flex;
+  justify-content: center;
+}
+
+/* ---------- Dashboard ---------- */
+.dashboard {
+  width: 100%;
+  max-width: none;
+  padding: 32px 24px;
+  color: #eaeaea;
+}
+
+/* ---------- Header ---------- */
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.capture-status {
+  font-weight: 600;
+}
+
+.status.running {
+  color: #4caf50;
+}
+
+.status.stopped {
+  color: #f44336;
+}
+
+/* ---------- Sections ---------- */
+.section {
+  background-color: #151515;
+  padding: 18px;
+  border-radius: 10px;
+  margin-bottom: 28px;
+  box-shadow: 0 0 0 1px #222;
+}
+
+h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+h2 {
+  margin: 0 0 12px 0;
+  font-size: 1.1rem;
+  color: #d0d0d0;
+}
+
+/* ---------- Tables ---------- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.table th,
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.table th {
+  background-color: #1f1f1f;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  color: #bdbdbd;
+}
+
+.table tbody tr:hover {
+  background-color: #202020;
+}
+
+/* ---------- Scroll Containers ---------- */
+.table-container {
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 6px;
+}
+
+/* ---------- Severity ---------- */
+.sev {
+  font-weight: 600;
+}
+
+.sev.benign {
+  color: #4caf50;
+}
+
+.sev.low {
+  color: #ffeb3b;
+}
+
+.sev.medium {
+  color: #ff9800;
+}
+
+.sev.high {
+  color: #f44336;
+}
+
+/* ---------- Misc ---------- */
+.mono {
+  font-family: "JetBrains Mono", monospace;
+}
+/* ===== FIX HEADER / BODY COLUMN MISALIGNMENT ===== */
+
+/* Force consistent column sizing */
+.table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* Reserve scrollbar space so header aligns with body */
+.table-container {
+  scrollbar-gutter: stable;
+}
+
+/* Prevent text from resizing columns */
+.table th,
+.table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ensure header cells align exactly */
+.table thead th {
+  box-sizing: border-box;
+}
+/* Align headers with column start */
+.table th {
+  text-align: left;
+  padding-left: 12px;
+}
+/* Vertical column separators */
+.table th,
+.table td {
+  border-right: 1px solid #2a2a2a;
+}
+
+/* Remove last column right border */
+.table th:last-child,
+.table td:last-child {
+  border-right: none;
+}
+.table th {
+  border-bottom: 2px solid #333;
+}

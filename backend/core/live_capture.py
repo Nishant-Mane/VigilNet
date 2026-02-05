@@ -7,51 +7,112 @@ import subprocess
 import time
 import threading
 import queue
+import json
 from storage.db_writer import insert_alert
-
 
 from flow_manager import FlowManager
 from feature_extractor import extract_model_features
 from ML.inference import IDSModel
 
 # ================= CONFIG =================
-TSHARK_INTERFACE_INDEX = "2"
+TSHARK_INTERFACE_INDEX = "6"
 FLOW_TIMEOUT_SECONDS = 30
 FINALIZE_INTERVAL = 2  # seconds
+
+MIN_PACKETS_FOR_ML = 10
+MIN_DURATION_FOR_ML = 1.0  # seconds
+
+ACTIVE_FLOWS_DUMP_INTERVAL = 2
+ACTIVE_FLOWS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "storage", "runtime", "active_flows.json")
+)
+
+LIVE_TRAFFIC_INTERVAL = 2
+LIVE_TRAFFIC_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "storage", "runtime", "live_traffic.json")
+)
+
+CAPTURE_STATUS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "storage", "runtime", "capture_status.json")
+)
+
 MODEL_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "ML", "model")
 )
-
 # =========================================
 
 
+def write_capture_status(running: bool):
+    """
+    Writes capture runtime status for API + frontend.
+    Single source of truth.
+    """
+    os.makedirs(os.path.dirname(CAPTURE_STATUS_PATH), exist_ok=True)
+    with open(CAPTURE_STATUS_PATH, "w") as f:
+        json.dump(
+            {
+                "running": running,
+                "timestamp": time.time()
+            },
+            f
+        )
+
+
 def tshark_reader(proc, q):
-    """
-    Reads tshark stdout in a separate thread (Windows-safe)
-    and pushes each line into a queue.
-    """
     for line in proc.stdout:
         q.put(line)
 
 
+def eligible_for_ml(flow):
+    total_packets = flow.fwd_packets + flow.bwd_packets
+    return (
+        total_packets >= MIN_PACKETS_FOR_ML and
+        flow.duration() >= MIN_DURATION_FOR_ML
+    )
+
+
+def dump_active_flows(manager):
+    now = time.time()
+    flows_snapshot = []
+
+    for flow in manager.active_flows.values():
+        flows_snapshot.append({
+            "src_ip": flow.src_ip,
+            "dst_ip": flow.dst_ip,
+            "src_port": flow.src_port,
+            "dst_port": flow.dst_port,
+            "protocol": flow.protocol,
+            "duration": round(flow.duration(), 2),
+            "packet_count": flow.fwd_packets + flow.bwd_packets,
+            "last_seen_seconds": round(now - flow.last_seen, 2)
+        })
+
+    os.makedirs(os.path.dirname(ACTIVE_FLOWS_PATH), exist_ok=True)
+    with open(ACTIVE_FLOWS_PATH, "w") as f:
+        json.dump(flows_snapshot, f)
+
+
 def start_live_capture():
-    # ---- Core components ----
+    # ---- WRITE RUNNING STATUS (CRITICAL FIX) ----
+    write_capture_status(True)
+
     manager = FlowManager(flow_timeout=FLOW_TIMEOUT_SECONDS)
     ids_model = IDSModel(model_dir=MODEL_DIR)
 
-    # ---- tshark command ----
     cmd = [
         r"C:\Program Files\Wireshark\tshark.exe",
         "-i", TSHARK_INTERFACE_INDEX,
         "-l",
         "-T", "fields",
+        "-e", "frame.len",
+        "-e", "tcp.flags",
         "-e", "ip.src",
         "-e", "ip.dst",
         "-e", "tcp.srcport",
         "-e", "tcp.dstport",
         "-e", "udp.srcport",
         "-e", "udp.dstport",
-        "-e", "ip.proto"
+        "-e", "ip.proto",
     ]
 
     print("Starting live packet capture via tshark...")
@@ -64,87 +125,107 @@ def start_live_capture():
         bufsize=1
     )
 
-    line_queue = queue.Queue()
-
-    reader_thread = threading.Thread(
-        target=tshark_reader,
-        args=(process, line_queue),
-        daemon=True
-    )
-    reader_thread.start()
+    q = queue.Queue()
+    threading.Thread(target=tshark_reader, args=(process, q), daemon=True).start()
 
     last_finalize = time.time()
+    last_active_dump = time.time()
+    last_traffic_dump = time.time()
+
+    total_packets = tcp_packets = udp_packets = 0
 
     try:
         while True:
-            # ------------- PACKET INGEST (NON-BLOCKING) -------------
             try:
-                line = line_queue.get(timeout=0.5)
+                line = q.get(timeout=0.5)
             except queue.Empty:
                 line = None
 
             if line:
                 fields = line.strip().split("\t")
-                if len(fields) >= 7:
-                    src_ip, dst_ip, tcp_src, tcp_dst, udp_src, udp_dst, proto = fields
+                if len(fields) >= 9:
+                    (
+                        frame_len,
+                        tcp_flags,
+                        src_ip,
+                        dst_ip,
+                        tcp_src,
+                        tcp_dst,
+                        udp_src,
+                        udp_dst,
+                        proto
+                    ) = fields
+
+                    packet_length = int(frame_len) if frame_len.isdigit() else 0
+                    flags = tcp_flags if tcp_flags else None
 
                     protocol = None
                     if tcp_src and tcp_dst:
+                        protocol = "TCP"
                         src_port = int(tcp_src)
                         dst_port = int(tcp_dst)
-                        protocol = "TCP"
+                        tcp_packets += 1
                     elif udp_src and udp_dst:
+                        protocol = "UDP"
                         src_port = int(udp_src)
                         dst_port = int(udp_dst)
-                        protocol = "UDP"
+                        udp_packets += 1
 
                     if protocol:
                         manager.process_packet(
-                            src_ip=src_ip,
-                            dst_ip=dst_ip,
-                            src_port=src_port,
-                            dst_port=dst_port,
-                            protocol=protocol,
-                            packet_length=0,   # length not wired yet
-                            flags=[]
+                            src_ip,
+                            dst_ip,
+                            src_port,
+                            dst_port,
+                            protocol,
+                            packet_length,
+                            flags
                         )
+                        total_packets += 1
 
-            # ------------- FLOW FINALIZATION + ML -------------
             now = time.time()
+
             if now - last_finalize >= FINALIZE_INTERVAL:
                 last_finalize = now
-
                 finalized_flows = manager.finalize_expired_flows()
 
                 for flow in finalized_flows:
-                    print(
-                        f"[FLOW FINALIZED] "
-                        f"{flow.src_ip}:{flow.src_port} -> "
-                        f"{flow.dst_ip}:{flow.dst_port} | "
-                        f"Proto={flow.protocol} | "
-                        f"Duration={flow.duration():.2f}s | "
-                        f"Packets={flow.fwd_packets + flow.bwd_packets}"
-                    )
+                    if not eligible_for_ml(flow):
+                        continue
 
-                    # ---- Feature extraction ----
                     features = extract_model_features(flow)
-
-                    # ---- ML inference ----
                     result = ids_model.predict(features)
                     insert_alert(flow, result)
 
+                    print(
+                        f"[ALERT] {flow.src_ip}:{flow.src_port} -> "
+                        f"{flow.dst_ip}:{flow.dst_port} | "
+                        f"{result['severity']} | "
+                        f"P={result['attack_probability']}"
+                    )
 
-                    print("[ML RESULT]")
-                    print(f"  Attack Probability: {result['attack_probability']}")
-                    print(f"  Prediction: {result['prediction']}")
-                    print(f"  Severity: {result['severity']}")
+            if now - last_active_dump >= ACTIVE_FLOWS_DUMP_INTERVAL:
+                dump_active_flows(manager)
+                last_active_dump = now
 
-                print(f"Active flows: {manager.total_flows()}")
+            if now - last_traffic_dump >= LIVE_TRAFFIC_INTERVAL:
+                os.makedirs(os.path.dirname(LIVE_TRAFFIC_PATH), exist_ok=True)
+                with open(LIVE_TRAFFIC_PATH, "w") as f:
+                    json.dump({
+                        "timestamp": now,
+                        "total_packets": total_packets,
+                        "tcp_packets": tcp_packets,
+                        "udp_packets": udp_packets
+                    }, f)
+
+                total_packets = tcp_packets = udp_packets = 0
+                last_traffic_dump = now
 
     except KeyboardInterrupt:
         print("\nStopping capture...")
-
     finally:
+        # ---- WRITE STOPPED STATUS (CRITICAL FIX) ----
+        write_capture_status(False)
         process.terminate()
 
 
