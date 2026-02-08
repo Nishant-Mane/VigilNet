@@ -1,0 +1,26 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Git
+.git/
+.gitignore
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Docker
+backend/Dockerfile.baseline
+docker-compose.yml
+
+# Logs / runtime
+*.log
+*.pcap

@@ -150,7 +150,13 @@ function App() {
                 ) : (
                   alerts.map(a => (
                     <tr key={a.id}>
-                      <td>{a.timestamp}</td>
+                      <td>
+                           {new Date(a.timestamp + "Z").toLocaleString("en-IN", {
+                            timeZone: "Asia/Kolkata",
+                            hour12: true
+                            })}
+                      </td>
+
                       <td>{a.src_ip}:{a.src_port}</td>
                       <td>{a.dst_ip}:{a.dst_port}</td>
                       <td>{a.protocol}</td>

@@ -1,21 +1,26 @@
 import sys
 import os
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 import subprocess
 import time
 import threading
 import queue
 import json
-from storage.db_writer import insert_alert
 
+# ================= PATH FIX =================
+# Ensure backend is importable
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from storage.db_writer import insert_alert
 from flow_manager import FlowManager
 from feature_extractor import extract_model_features
 from ML.inference import IDSModel
 
 # ================= CONFIG =================
-TSHARK_INTERFACE_INDEX = "6"
+
+# ---- CAPTURE CONFIG (DOCKER SAFE) ----
+TSHARK_BIN = os.getenv("TSHARK_BIN", "tshark")
+CAPTURE_IFACE = os.getenv("CAPTURE_IFACE", "eth0")
+
 FLOW_TIMEOUT_SECONDS = 30
 FINALIZE_INTERVAL = 2  # seconds
 
@@ -23,31 +28,25 @@ MIN_PACKETS_FOR_ML = 10
 MIN_DURATION_FOR_ML = 1.0  # seconds
 
 ACTIVE_FLOWS_DUMP_INTERVAL = 2
-ACTIVE_FLOWS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "storage", "runtime", "active_flows.json")
-)
-
 LIVE_TRAFFIC_INTERVAL = 2
-LIVE_TRAFFIC_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "storage", "runtime", "live_traffic.json")
-)
 
-CAPTURE_STATUS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "storage", "runtime", "capture_status.json")
-)
+# ---- STORAGE PATHS ----
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-MODEL_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "ML", "model")
-)
+STORAGE_DIR = os.path.join(BASE_DIR, "storage", "runtime")
+os.makedirs(STORAGE_DIR, exist_ok=True)
+
+ACTIVE_FLOWS_PATH = os.path.join(STORAGE_DIR, "active_flows.json")
+LIVE_TRAFFIC_PATH = os.path.join(STORAGE_DIR, "live_traffic.json")
+CAPTURE_STATUS_PATH = os.path.join(STORAGE_DIR, "capture_status.json")
+
+# ---- MODEL PATH (DOCKER SAFE) ----
+MODEL_DIR = os.getenv("MODEL_DIR", "/app/models")
+
 # =========================================
 
 
 def write_capture_status(running: bool):
-    """
-    Writes capture runtime status for API + frontend.
-    Single source of truth.
-    """
-    os.makedirs(os.path.dirname(CAPTURE_STATUS_PATH), exist_ok=True)
     with open(CAPTURE_STATUS_PATH, "w") as f:
         json.dump(
             {
@@ -87,21 +86,19 @@ def dump_active_flows(manager):
             "last_seen_seconds": round(now - flow.last_seen, 2)
         })
 
-    os.makedirs(os.path.dirname(ACTIVE_FLOWS_PATH), exist_ok=True)
     with open(ACTIVE_FLOWS_PATH, "w") as f:
         json.dump(flows_snapshot, f)
 
 
 def start_live_capture():
-    # ---- WRITE RUNNING STATUS (CRITICAL FIX) ----
     write_capture_status(True)
 
     manager = FlowManager(flow_timeout=FLOW_TIMEOUT_SECONDS)
     ids_model = IDSModel(model_dir=MODEL_DIR)
 
     cmd = [
-        r"C:\Program Files\Wireshark\tshark.exe",
-        "-i", TSHARK_INTERFACE_INDEX,
+        TSHARK_BIN,
+        "-i", CAPTURE_IFACE,
         "-l",
         "-T", "fields",
         "-e", "frame.len",
@@ -115,7 +112,7 @@ def start_live_capture():
         "-e", "ip.proto",
     ]
 
-    print("Starting live packet capture via tshark...")
+    print(f"[INFO] Starting TShark on interface: {CAPTURE_IFACE}")
 
     process = subprocess.Popen(
         cmd,
@@ -209,7 +206,6 @@ def start_live_capture():
                 last_active_dump = now
 
             if now - last_traffic_dump >= LIVE_TRAFFIC_INTERVAL:
-                os.makedirs(os.path.dirname(LIVE_TRAFFIC_PATH), exist_ok=True)
                 with open(LIVE_TRAFFIC_PATH, "w") as f:
                     json.dump({
                         "timestamp": now,
@@ -222,9 +218,8 @@ def start_live_capture():
                 last_traffic_dump = now
 
     except KeyboardInterrupt:
-        print("\nStopping capture...")
+        print("\n[INFO] Stopping capture...")
     finally:
-        # ---- WRITE STOPPED STATUS (CRITICAL FIX) ----
         write_capture_status(False)
         process.terminate()
 
